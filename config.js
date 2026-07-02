@@ -72,6 +72,7 @@ export const config = {
 
   // ─── Pool Screening Thresholds ───────────
   screening: {
+    candidateSource:  u.candidateSource  ?? "meteora_discovery", // meteora_discovery | gmgn_trending
     excludeHighSupplyConcentration: u.excludeHighSupplyConcentration ?? true,
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
     minTvl:            u.minTvl            ?? 10_000,
@@ -139,6 +140,13 @@ export const config = {
     minBinsBelow: strategyMinBinsBelow,
     maxBinsBelow: strategyMaxBinsBelow,
     defaultBinsBelow: strategyDefaultBinsBelow,
+    rangeShape: u.rangeShape ?? "default", // default | single_down
+    singleDownUpperPct: Number(u.singleDownUpperPct ?? -1),
+    singleDownLowVolLowerPct: Number(u.singleDownLowVolLowerPct ?? -30),
+    singleDownMediumVolLowerPct: Number(u.singleDownMediumVolLowerPct ?? -55),
+    singleDownHighVolLowerPct: Number(u.singleDownHighVolLowerPct ?? -75),
+    singleDownMediumVolatility: Number(u.singleDownMediumVolatility ?? 2),
+    singleDownHighVolatility: Number(u.singleDownHighVolatility ?? 5),
   },
 
   // ─── Scheduling ─────────────────────────
@@ -236,6 +244,14 @@ export const config = {
     maxRetries: Number(gmgnUserConfig.maxRetries ?? u.gmgnMaxRetries ?? 2),
     // gmgn = use GMGN total_fee for global_fees_sol; jupiter = legacy Jupiter fees
     feeSource: nonEmptyString(gmgnUserConfig.feeSource, u.gmgnFeeSource, "gmgn"),
+    trendingInterval: nonEmptyString(u.gmgnTrendingInterval, "5m"),
+    trendingOrderBy: nonEmptyString(u.gmgnTrendingOrderBy, "volume"),
+    trendingLimit: Number(u.gmgnTrendingLimit ?? 100),
+    minMarketcap: Number(u.gmgnMinMarketcap ?? 100_000),
+    maxMarketcap: Number(u.gmgnMaxMarketcap ?? 1_000_000),
+    minVolume: Number(u.gmgnMinVolume ?? 20_000),
+    minSwaps: Number(u.gmgnMinSwaps ?? 100),
+    minLiquidity: Number(u.gmgnMinLiquidity ?? 50_000),
   },
 
   jupiter: {
@@ -299,6 +315,7 @@ export function reloadScreeningThresholds() {
     const s = config.screening;
     if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
     if (fresh.minTokenFeesSol  != null) s.minTokenFeesSol  = fresh.minTokenFeesSol;
+    if (fresh.candidateSource != null) s.candidateSource = fresh.candidateSource;
     if (fresh.maxTop10Pct      != null) s.maxTop10Pct      = fresh.maxTop10Pct;
     if (fresh.useDiscordSignals !== undefined) s.useDiscordSignals = fresh.useDiscordSignals;
     if (fresh.discordSignalMode != null) s.discordSignalMode = fresh.discordSignalMode;

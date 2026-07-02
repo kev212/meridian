@@ -138,10 +138,11 @@ HARD RULES:
 - Range must cover at least 35 total bins. Never deploy 1-bin/tiny ranges.
 - For single-side SOL deploys (amount_y only, amount_x=0), do not request upside exposure:
   use bins_below only, keep bins_above=0, and the upper bin will be pinned to the current active bin.
+- If config.strategy.rangeShape is single_down, omit bins/downside/upside fields; the engine will place the full range below active price using configured upper/lower percentages.
 
 Guidelines (only when user hasn't specified):
 - Strategy: omit the strategy field — the system will use the configured default from config.strategy.strategy
-- Bins: choose from configured minBinsBelow/maxBinsBelow by positive volatility. The hard lower floor is 35 bins.
+- Bins: when rangeShape is default, choose from configured minBinsBelow/maxBinsBelow by positive volatility. When rangeShape is single_down, omit bins and let the engine compute range.
 - Deposit: single-sided SOL only: set amount_y/amount_sol, keep amount_x=0.
 
 WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,

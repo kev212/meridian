@@ -477,6 +477,7 @@ export async function deployPosition({
   const activeStrategy = strategy || config.strategy.strategy;
   let activeBinsBelow = bins_below ?? config.strategy.defaultBinsBelow ?? config.strategy.minBinsBelow;
   let activeBinsAbove = bins_above ?? 0;
+  let customRange = null;
   const parsedVolatility = volatility == null ? null : Number(volatility);
   const normalizedVolatility = parsedVolatility != null && Number.isFinite(parsedVolatility) ? parsedVolatility : null;
 
@@ -557,19 +558,69 @@ export async function deployPosition({
   if (isSingleSidedSol) {
     activeBinsAbove = 0;
   }
+
+  const shouldUseSingleDownRange =
+    isSingleSidedSol &&
+    config.strategy.rangeShape === "single_down" &&
+    bins_below == null &&
+    bins_above == null &&
+    downside_pct == null &&
+    upside_pct == null;
+  if (shouldUseSingleDownRange) {
+    const mediumVol = Number(config.strategy.singleDownMediumVolatility ?? 2);
+    const highVol = Number(config.strategy.singleDownHighVolatility ?? 5);
+    const normalizeNegativePct = (value, fallback) => {
+      const n = Number(value);
+      return -Math.abs(Number.isFinite(n) ? n : fallback);
+    };
+    const upperPct = normalizeNegativePct(config.strategy.singleDownUpperPct, 1);
+    let lowerPct;
+    if (normalizedVolatility != null && Number.isFinite(highVol) && normalizedVolatility > highVol) {
+      lowerPct = normalizeNegativePct(config.strategy.singleDownHighVolLowerPct, 75);
+    } else if (normalizedVolatility != null && Number.isFinite(mediumVol) && normalizedVolatility > mediumVol) {
+      lowerPct = normalizeNegativePct(config.strategy.singleDownMediumVolLowerPct, 55);
+    } else {
+      lowerPct = normalizeNegativePct(config.strategy.singleDownLowVolLowerPct, 30);
+    }
+    if (lowerPct >= upperPct) lowerPct = upperPct - 1;
+
+    const lowerTargetPrice = activePrice * (1 + lowerPct / 100);
+    const upperTargetPrice = activePrice * (1 + upperPct / 100);
+    const minBinIdFromPct = getBinIdFromPrice(lowerTargetPrice, actualBinStep, true);
+    const maxBinIdFromPct = getBinIdFromPrice(upperTargetPrice, actualBinStep, false);
+    customRange = {
+      shape: "single_down",
+      lower_pct: lowerPct,
+      upper_pct: upperPct,
+      minBinId: Math.min(minBinIdFromPct, maxBinIdFromPct - 1),
+      maxBinId: Math.min(maxBinIdFromPct, activeBin.binId - 1),
+    };
+    activeBinsBelow = activeBin.binId - customRange.minBinId;
+    activeBinsAbove = customRange.maxBinId - activeBin.binId;
+  }
   activeBinsBelow = Number(activeBinsBelow);
   activeBinsAbove = Number(activeBinsAbove);
   if (!Number.isFinite(activeBinsBelow) || !Number.isFinite(activeBinsAbove)) {
     throw new Error("Invalid bin range: bins_below and bins_above must be valid numbers.");
   }
-  if (activeBinsBelow < 0 || activeBinsAbove < 0) {
+  if (!customRange && (activeBinsBelow < 0 || activeBinsAbove < 0)) {
     throw new Error("Invalid bin range: bins_below and bins_above cannot be negative.");
   }
   if (!Number.isInteger(activeBinsBelow) || !Number.isInteger(activeBinsAbove)) {
     throw new Error("Invalid bin range: bins_below and bins_above must be whole-bin integers.");
   }
   const minBinsBelow = Math.max(MIN_SAFE_BINS_BELOW, Number(config.strategy.minBinsBelow ?? MIN_SAFE_BINS_BELOW));
-  const totalBins = activeBinsBelow + activeBinsAbove;
+  if (customRange) {
+    if (customRange.maxBinId >= activeBin.binId) customRange.maxBinId = activeBin.binId - 1;
+    if (customRange.minBinId >= customRange.maxBinId) customRange.minBinId = customRange.maxBinId - 1;
+    const customTotalBins = customRange.maxBinId - customRange.minBinId;
+    if (customTotalBins < minBinsBelow) {
+      customRange.minBinId = customRange.maxBinId - minBinsBelow;
+      activeBinsBelow = activeBin.binId - customRange.minBinId;
+    }
+    activeBinsAbove = customRange.maxBinId - activeBin.binId;
+  }
+  const totalBins = customRange ? customRange.maxBinId - customRange.minBinId : activeBinsBelow + activeBinsAbove;
   if (totalBins < minBinsBelow) {
     throw new Error(
       `Invalid deploy range: total bins ${totalBins} is below minimum ${minBinsBelow}. Refusing 1-bin/tiny-range deploy.`,
@@ -582,8 +633,12 @@ export async function deployPosition({
       would_deploy: {
         pool_address,
         strategy: activeStrategy,
+        range_shape: customRange?.shape || config.strategy.rangeShape || "default",
+        range_lower_pct: customRange?.lower_pct ?? null,
+        range_upper_pct: customRange?.upper_pct ?? null,
         bins_below: activeBinsBelow,
         bins_above: activeBinsAbove,
+        total_bins: totalBins,
         downside_pct: downside_pct ?? null,
         upside_pct: upside_pct ?? null,
         amount_x: finalAmountX,
@@ -595,13 +650,13 @@ export async function deployPosition({
   }
 
   const isWideRange = totalBins > 69;
-  const minBinId = activeBin.binId - activeBinsBelow;
-  const maxBinId = isSingleSidedSol ? activeBin.binId : activeBin.binId + activeBinsAbove;
+  const minBinId = customRange ? customRange.minBinId : activeBin.binId - activeBinsBelow;
+  const maxBinId = customRange ? customRange.maxBinId : (isSingleSidedSol ? activeBin.binId : activeBin.binId + activeBinsAbove);
 
   if (minBinId > maxBinId) {
     throw new Error(`Invalid bin range: ${minBinId} -> ${maxBinId}`);
   }
-  if (isSingleSidedSol && maxBinId !== activeBin.binId) {
+  if (isSingleSidedSol && !customRange && maxBinId !== activeBin.binId) {
     throw new Error(
       `Single-side SOL deploy must end at the SDK active bin. Expected ${activeBin.binId}, got ${maxBinId}.`,
     );
@@ -614,6 +669,15 @@ export async function deployPosition({
   const downsideCoveragePct = activePrice > 0 ? ((activePrice - minPrice) / activePrice) * 100 : null;
   const upsideCoveragePct = activePrice > 0 ? ((maxPrice - activePrice) / activePrice) * 100 : null;
   const totalWidthPct = minPrice > 0 ? ((maxPrice - minPrice) / minPrice) * 100 : null;
+  const binRangeRecord = {
+    min: minBinId,
+    max: maxBinId,
+    bins_below: activeBinsBelow,
+    bins_above: activeBinsAbove,
+    shape: customRange?.shape || config.strategy.rangeShape || "default",
+    lower_pct: customRange?.lower_pct ?? null,
+    upper_pct: customRange?.upper_pct ?? null,
+  };
 
   // Read base fee directly from pool — baseFactor * binStep / 10^6 gives fee in %
   const baseFactor = pool.lbPair.parameters?.baseFactor ?? 0;
@@ -698,7 +762,7 @@ export async function deployPosition({
           pool: pool_address,
           pool_name,
           strategy: activeStrategy,
-          bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
+          bin_range: binRangeRecord,
           bin_step,
           volatility: normalizedVolatility,
           fee_tvl_ratio,
@@ -733,6 +797,7 @@ export async function deployPosition({
           active_bin: activeBin.binId,
           min_bin: minBinId,
           max_bin: maxBinId,
+          range_shape: binRangeRecord.shape,
           downside_pct: downside_pct ?? downsideCoveragePct,
           upside_pct: upside_pct ?? upsideCoveragePct,
         },
@@ -745,7 +810,7 @@ export async function deployPosition({
         position: positionAddress,
         pool: pool_address,
         pool_name,
-        bin_range: { min: minBinId, max: maxBinId, active: activeBin.binId },
+        bin_range: { ...binRangeRecord, active: activeBin.binId },
         price_range: { min: minPrice, max: maxPrice },
         range_coverage: {
           downside_pct: downsideCoveragePct,
@@ -840,7 +905,7 @@ export async function deployPosition({
       pool: pool_address,
       pool_name,
       strategy: activeStrategy,
-      bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
+      bin_range: binRangeRecord,
       bin_step,
       volatility: normalizedVolatility,
       fee_tvl_ratio,
@@ -874,8 +939,9 @@ export async function deployPosition({
         active_bin: activeBin.binId,
         min_bin: minBinId,
         max_bin: maxBinId,
-        downside_pct: downside_pct ?? null,
-        upside_pct: upside_pct ?? null,
+        range_shape: binRangeRecord.shape,
+        downside_pct: downside_pct ?? downsideCoveragePct,
+        upside_pct: upside_pct ?? upsideCoveragePct,
       },
     });
 
@@ -884,7 +950,7 @@ export async function deployPosition({
       position: newPosition.publicKey.toString(),
       pool: pool_address,
       pool_name,
-      bin_range: { min: minBinId, max: maxBinId, active: activeBin.binId },
+      bin_range: { ...binRangeRecord, active: activeBin.binId },
       price_range: { min: minPrice, max: maxPrice },
       range_coverage: {
         downside_pct: downsideCoveragePct,

@@ -20,6 +20,7 @@ import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-bla
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
+import { getGmgnTrendingTokens, hasGmgnApiKey } from "./gmgn.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
 import fs from "fs";
@@ -70,6 +71,61 @@ function poolDetailVolatility(pool) {
   return numberOrNull(pool?.volatility);
 }
 
+function poolDetailBaseMint(pool) {
+  return pool?.token_x?.address || pool?.base_token_address || pool?.base_mint || null;
+}
+
+async function validateGmgnTrendingThresholds(detail) {
+  const baseMint = poolDetailBaseMint(detail);
+  if (!baseMint) {
+    return { pass: false, reason: "Could not verify GMGN token mint before deploy." };
+  }
+  if (!hasGmgnApiKey()) {
+    return { pass: false, reason: "GMGN_API_KEY not set; cannot verify gmgn_trending deploy gate." };
+  }
+
+  let trending;
+  try {
+    trending = await getGmgnTrendingTokens({
+      interval: config.gmgn.trendingInterval || "5m",
+      limit: config.gmgn.trendingLimit || 100,
+    });
+  } catch (error) {
+    return { pass: false, reason: `Could not verify GMGN trending gate: ${error.message}` };
+  }
+
+  const token = (trending.tokens || []).find((entry) => entry.mint === baseMint);
+  if (!token) {
+    return { pass: false, reason: `Token ${baseMint.slice(0, 8)} is not in current GMGN ${config.gmgn.trendingInterval || "5m"} trending gate.` };
+  }
+
+  const checks = [
+    ["market_cap", token.market_cap, config.gmgn.minMarketcap, ">="],
+    ["market_cap", token.market_cap, config.gmgn.maxMarketcap, "<="],
+    ["volume", token.volume, config.gmgn.minVolume, ">="],
+    ["swaps", token.swaps, config.gmgn.minSwaps, ">="],
+    ["liquidity", token.liquidity, config.gmgn.minLiquidity, ">="],
+  ];
+  for (const [label, actual, threshold, op] of checks) {
+    const a = numberOrNull(actual);
+    const t = numberOrNull(threshold);
+    if (t == null) continue;
+    if (a == null || (op === ">=" ? a < t : a > t)) {
+      return { pass: false, reason: `GMGN ${label} ${a ?? "unknown"} does not satisfy ${op} ${t}.` };
+    }
+  }
+
+  return {
+    pass: true,
+    gmgnMarketData: {
+      gmgn_market_cap: token.market_cap,
+      gmgn_volume_5m: token.volume,
+      gmgn_swaps_5m: token.swaps,
+      gmgn_liquidity: token.liquidity,
+    },
+  };
+}
+
 async function fetchFreshPoolDetail(poolAddress, timeframe = config.screening.timeframe || "5m") {
   const encodedTimeframe = encodeURIComponent(timeframe);
   const filter = encodeURIComponent(`pool_address=${poolAddress}`);
@@ -92,6 +148,13 @@ async function validateDeployPoolThresholds(args) {
     };
   }
 
+  const usingGmgnSource = config.screening.candidateSource === "gmgn_trending";
+  if (usingGmgnSource) {
+    const gmgnGate = await validateGmgnTrendingThresholds(detail);
+    if (!gmgnGate.pass) return gmgnGate;
+    if (gmgnGate.gmgnMarketData) Object.assign(args, gmgnGate.gmgnMarketData);
+  }
+
   const tvl = poolDetailTvl(detail);
   const minTvl = numberOrNull(config.screening.minTvl);
   const maxTvl = numberOrNull(config.screening.maxTvl);
@@ -101,13 +164,13 @@ async function validateDeployPoolThresholds(args) {
       reason: "Could not verify pool TVL before deploy.",
     };
   }
-  if (minTvl != null && minTvl > 0 && tvl < minTvl) {
+  if (!usingGmgnSource && minTvl != null && minTvl > 0 && tvl < minTvl) {
     return {
       pass: false,
       reason: `Pool TVL $${tvl} is below configured minTvl $${minTvl}.`,
     };
   }
-  if (maxTvl != null && maxTvl > 0 && tvl > maxTvl) {
+  if (!usingGmgnSource && maxTvl != null && maxTvl > 0 && tvl > maxTvl) {
     return {
       pass: false,
       reason: `Pool TVL $${tvl} is above configured maxTvl $${maxTvl}.`,
@@ -117,6 +180,7 @@ async function validateDeployPoolThresholds(args) {
   const feeActiveTvlRatio = poolDetailFeeActiveTvlRatio(detail);
   const minFeeActiveTvlRatio = numberOrNull(config.screening.minFeeActiveTvlRatio);
   if (
+    !usingGmgnSource &&
     minFeeActiveTvlRatio != null &&
     minFeeActiveTvlRatio > 0 &&
     (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeActiveTvlRatio)
@@ -164,7 +228,7 @@ async function validateDeployPoolThresholds(args) {
     };
   }
 
-  const baseMint = detail?.token_x?.address || detail?.base_token_address || null;
+  const baseMint = poolDetailBaseMint(detail);
   const entryMarketData = {
     entry_mcap: numberOrNull(detail?.token_x?.market_cap ?? detail?.base_token_market_cap),
     entry_tvl: tvl,
@@ -219,6 +283,7 @@ function normalizeConfigValue(key, value) {
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
   const stringKeys = new Set([
+    "candidateSource",
     "timeframe",
     "category",
     "discordSignalMode",
@@ -236,6 +301,9 @@ function normalizeConfigValue(key, value) {
     "pnlRpcUrl",
     "gmgnFeeSource",
     "gmgnApiKey",
+    "gmgnTrendingInterval",
+    "gmgnTrendingOrderBy",
+    "rangeShape",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
@@ -344,6 +412,7 @@ const toolMap = {
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP = {
       // screening
+      candidateSource: ["screening", "candidateSource"],
       minFeeActiveTvlRatio: ["screening", "minFeeActiveTvlRatio"],
       excludeHighSupplyConcentration: ["screening", "excludeHighSupplyConcentration"],
       minTvl: ["screening", "minTvl"],
@@ -431,6 +500,13 @@ const toolMap = {
       minBinsBelow: ["strategy", "minBinsBelow"],
       maxBinsBelow: ["strategy", "maxBinsBelow"],
       defaultBinsBelow: ["strategy", "defaultBinsBelow"],
+      rangeShape: ["strategy", "rangeShape"],
+      singleDownUpperPct: ["strategy", "singleDownUpperPct"],
+      singleDownLowVolLowerPct: ["strategy", "singleDownLowVolLowerPct"],
+      singleDownMediumVolLowerPct: ["strategy", "singleDownMediumVolLowerPct"],
+      singleDownHighVolLowerPct: ["strategy", "singleDownHighVolLowerPct"],
+      singleDownMediumVolatility: ["strategy", "singleDownMediumVolatility"],
+      singleDownHighVolatility: ["strategy", "singleDownHighVolatility"],
       // hivemind
       hiveMindUrl: ["hiveMind", "url"],
       hiveMindApiKey: ["hiveMind", "apiKey"],
@@ -448,6 +524,14 @@ const toolMap = {
       // gmgn fee source
       gmgnFeeSource: ["gmgn", "feeSource", ["gmgnFeeSource"]],
       gmgnApiKey: ["gmgn", "apiKey", ["gmgnApiKey"]],
+      gmgnTrendingInterval: ["gmgn", "trendingInterval"],
+      gmgnTrendingOrderBy: ["gmgn", "trendingOrderBy"],
+      gmgnTrendingLimit: ["gmgn", "trendingLimit"],
+      gmgnMinMarketcap: ["gmgn", "minMarketcap"],
+      gmgnMaxMarketcap: ["gmgn", "maxMarketcap"],
+      gmgnMinVolume: ["gmgn", "minVolume"],
+      gmgnMinSwaps: ["gmgn", "minSwaps"],
+      gmgnMinLiquidity: ["gmgn", "minLiquidity"],
       // chart indicators
       chartIndicatorsEnabled: ["indicators", "enabled", ["chartIndicators", "enabled"]],
       indicatorEntryPreset: ["indicators", "entryPreset", ["chartIndicators", "entryPreset"]],

@@ -110,6 +110,7 @@ RISK SIGNALS (guidelines — use judgment):
 - top10 > 60% → concentrated, risky
 - PVP symbol conflict (same exact symbol across multiple mints) → major negative. Avoid unless the setup is exceptional and clearly stronger than the competing symbol variants.
 - no narrative + no smart wallets → skip
+- For source=gmgn_trending candidates, GMGN 5m activity gates are the primary signal; do NOT skip solely because narrative or smart wallets are missing.
 
 NARRATIVE QUALITY (your main judgment call):
 - GOOD: specific origin — real event, viral moment, named entity, active community
@@ -120,7 +121,9 @@ POOL MEMORY: Past losses or problems → strong skip signal.
 
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
-- bins_below = round(config.strategy.minBinsBelow + (candidate volatility/5)*(config.strategy.maxBinsBelow-config.strategy.minBinsBelow)) clamped to [minBinsBelow,maxBinsBelow]. Volatility must be a positive number; 0/unknown means skip.
+- GMGN TRENDING SOURCE: prefer candidates with stronger gmgn_volume_5m, gmgn_swaps_5m, gmgn_liquidity, and lower gmgn_rug_ratio / gmgn_top_10_holder_rate.
+- If config.strategy.rangeShape=single_down, call deploy_position with amount_y only and omit bins_below/bins_above/downside_pct/upside_pct; the deploy engine computes upper/lower range below active price.
+- For config.strategy.rangeShape=default only: bins_below = round(config.strategy.minBinsBelow + (candidate volatility/5)*(config.strategy.maxBinsBelow-config.strategy.minBinsBelow)) clamped to [minBinsBelow,maxBinsBelow]. Volatility must be a positive number; 0/unknown means skip.
 - Use amount_y only, keep amount_x=0 and bins_above=0.
 - Bin steps must be [80-125].
 - Pick ONE pool only when conviction is real. If only one weak candidate survives, skip and explain why none qualify.

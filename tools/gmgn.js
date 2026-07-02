@@ -93,6 +93,96 @@ function num(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function bool(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "1"].includes(normalized)) return true;
+    if (["false", "no", "0", ""].includes(normalized)) return false;
+  }
+  return Boolean(value);
+}
+
+function pickRankArray(payload) {
+  const candidates = [
+    payload?.data?.rank,
+    payload?.data?.data?.rank,
+    payload?.rank,
+    payload?.data,
+  ];
+  return candidates.find(Array.isArray) || [];
+}
+
+function normalizeTrendingToken(item, interval) {
+  const mint = item?.address || item?.token_address || item?.mint || null;
+  return {
+    mint,
+    address: mint,
+    symbol: item?.symbol || null,
+    name: item?.name || null,
+    chain: item?.chain || "sol",
+    interval,
+    rank: num(item?.rank),
+    hot_level: num(item?.hot_level),
+    market_cap: num(item?.market_cap ?? item?.usd_market_cap),
+    liquidity: num(item?.liquidity),
+    volume: num(item?.volume),
+    swaps: num(item?.swaps),
+    buys: num(item?.buys),
+    sells: num(item?.sells),
+    holder_count: num(item?.holder_count),
+    price: num(item?.price),
+    price_change_percent: num(item?.price_change_percent),
+    price_change_percent5m: num(item?.price_change_percent5m),
+    top_10_holder_rate: num(item?.top_10_holder_rate),
+    rug_ratio: num(item?.rug_ratio),
+    bundler_rate: num(item?.bundler_rate),
+    insider_rate: num(item?.insider_rate ?? item?.rat_trader_amount_rate),
+    is_wash_trading: bool(item?.is_wash_trading),
+    smart_degen_count: num(item?.smart_degen_count),
+    renowned_count: num(item?.renowned_count),
+    launchpad_platform: item?.launchpad_platform || null,
+    exchange: item?.exchange || null,
+    open_timestamp: num(item?.open_timestamp),
+    creation_timestamp: num(item?.creation_timestamp),
+    raw: item,
+  };
+}
+
+export async function getGmgnTrendingTokens(options = {}) {
+  if (!hasGmgnApiKey()) {
+    throw new Error("GMGN_API_KEY is required for gmgn_trending screening.");
+  }
+
+  const interval = options.interval || config.gmgn?.trendingInterval || "5m";
+  const limit = Math.min(100, Math.max(1, Number(options.limit ?? config.gmgn?.trendingLimit ?? 100)));
+  const params = {
+    chain: options.chain || "sol",
+    interval,
+    order_by: options.orderBy || config.gmgn?.trendingOrderBy || "volume",
+    direction: options.direction || "desc",
+    limit,
+    min_marketcap: options.minMarketcap ?? config.gmgn?.minMarketcap,
+    max_marketcap: options.maxMarketcap ?? config.gmgn?.maxMarketcap,
+    min_volume: options.minVolume ?? config.gmgn?.minVolume,
+    min_swaps: options.minSwaps ?? config.gmgn?.minSwaps,
+    min_liquidity: options.minLiquidity ?? config.gmgn?.minLiquidity,
+  };
+
+  const payload = await gmgnFetch("/v1/market/rank", { params });
+  const tokens = pickRankArray(payload)
+    .map((item) => normalizeTrendingToken(item, interval))
+    .filter((token) => token.mint);
+
+  return {
+    source: "gmgn_trending",
+    interval,
+    total: tokens.length,
+    tokens,
+  };
+}
+
 // ─── Token fees (SOL) for the minTokenFeesSol gate ──────────────
 // Returns { total_fee, trade_fee } in SOL, or null on missing key / error
 // so callers can fall back to Jupiter's fee figure.

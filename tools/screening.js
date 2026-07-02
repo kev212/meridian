@@ -5,8 +5,11 @@ import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
+import { getGmgnTrendingTokens, hasGmgnApiKey } from "./gmgn.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
+const DATAPI_DLMM = "https://dlmm.datapi.meteora.ag";
+const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME = "30m";
@@ -33,6 +36,14 @@ function normalizeSymbol(symbol) {
 }
 
 export function scoreCandidate(pool) {
+  if (pool?.source === "gmgn_trending") {
+    const volume = Number(pool.gmgn_volume_5m || 0);
+    const swaps = Number(pool.gmgn_swaps_5m || 0);
+    const liquidity = Number(pool.gmgn_liquidity || 0);
+    const smart = Number(pool.gmgn_smart_degen_count || 0);
+    const riskPenalty = Number(pool.gmgn_rug_ratio || 0) * 1000 + Number(pool.gmgn_top_10_holder_rate || 0) * 500;
+    return volume / 10 + swaps * 50 + liquidity / 100 + smart * 1000 - riskPenalty;
+  }
   const feeTvl = Number(pool.fee_active_tvl_ratio || 0);
   const organic = Number(pool.organic_score || 0);
   const volume = Number(pool.volume_window || 0);
@@ -238,6 +249,114 @@ async function fetchPoolDiscoveryDetail({ poolAddress, timeframe }) {
   return (data.data || [])[0] ?? null;
 }
 
+async function fetchDlmmPoolsByMint(mint) {
+  const url = `${DATAPI_DLMM}/pools?query=${encodeURIComponent(mint)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`DLMM pool search error: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data || [];
+}
+
+function attachGmgnMetrics(pool, token) {
+  pool.source = "gmgn_trending";
+  pool.gmgn_rank = token.rank;
+  pool.gmgn_market_cap = token.market_cap;
+  pool.gmgn_volume_5m = token.volume;
+  pool.gmgn_swaps_5m = token.swaps;
+  pool.gmgn_liquidity = token.liquidity;
+  pool.gmgn_holder_count = token.holder_count;
+  pool.gmgn_top_10_holder_rate = token.top_10_holder_rate;
+  pool.gmgn_rug_ratio = token.rug_ratio;
+  pool.gmgn_bundler_rate = token.bundler_rate;
+  pool.gmgn_insider_rate = token.insider_rate;
+  pool.gmgn_is_wash_trading = token.is_wash_trading;
+  pool.gmgn_smart_degen_count = token.smart_degen_count;
+  pool.gmgn_renowned_count = token.renowned_count;
+  pool.gmgn_launchpad_platform = token.launchpad_platform;
+  pool.gmgn_exchange = token.exchange;
+  return pool;
+}
+
+async function resolveGmgnTokenToDlmmPool(token, timeframe) {
+  const dlmmPools = await fetchDlmmPoolsByMint(token.mint);
+  const poolAddresses = [...new Set(
+    dlmmPools
+      .map((pool) => pool.address || pool.pool_address)
+      .filter(Boolean)
+  )];
+  if (poolAddresses.length === 0) return null;
+
+  const detailResults = await Promise.allSettled(
+    poolAddresses.map(async (poolAddress) => {
+      const detail = await fetchPoolDiscoveryDetail({ poolAddress, timeframe });
+      if (!detail) return null;
+      const withVolatility = (await applyVolatilityTimeframe([detail], timeframe))[0] || detail;
+      const baseMint = getPoolBaseMint(withVolatility);
+      const quoteMint = withVolatility?.token_y?.address || withVolatility?.quote_token_address || null;
+      if (baseMint !== token.mint) return null;
+      if (quoteMint !== SOL_MINT) return null;
+      if (withVolatility.pool_type && withVolatility.pool_type !== "dlmm") return null;
+      return withVolatility;
+    })
+  );
+
+  const details = detailResults
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value);
+  if (details.length === 0) return null;
+
+  details.sort((a, b) => Number(b.active_tvl ?? b.tvl ?? 0) - Number(a.active_tvl ?? a.tvl ?? 0));
+  return attachGmgnMetrics(condensePool(details[0]), token);
+}
+
+async function discoverGmgnTrendingPools({ page_size = 50 } = {}) {
+  if (!hasGmgnApiKey()) {
+    return {
+      total: 0,
+      pools: [],
+      filtered_examples: [{ name: "gmgn_trending", reason: "GMGN_API_KEY not set" }],
+    };
+  }
+
+  const s = config.screening;
+  const limit = Math.min(100, Math.max(1, Number(config.gmgn.trendingLimit || page_size || 50)));
+  const gmgn = await getGmgnTrendingTokens({
+    interval: config.gmgn.trendingInterval || s.timeframe || "5m",
+    limit,
+  });
+  const tokens = gmgn.tokens.slice(0, limit);
+  const filteredExamples = [];
+  const resolved = [];
+
+  for (const token of tokens) {
+    if (isBlacklisted(token.mint)) {
+      filteredExamples.push({ name: token.symbol || token.mint, reason: "blacklisted token" });
+      continue;
+    }
+    if (token.is_wash_trading) {
+      filteredExamples.push({ name: token.symbol || token.mint, reason: "GMGN wash trading flag" });
+      continue;
+    }
+
+    try {
+      const pool = await resolveGmgnTokenToDlmmPool(token, s.timeframe || "5m");
+      if (!pool) {
+        filteredExamples.push({ name: token.symbol || token.mint, reason: "no SOL-quote DLMM pool found on Meteora" });
+        continue;
+      }
+      resolved.push(pool);
+    } catch (error) {
+      filteredExamples.push({ name: token.symbol || token.mint, reason: `DLMM resolve failed: ${error.message}` });
+    }
+  }
+
+  return {
+    total: gmgn.total,
+    pools: resolved,
+    filtered_examples: filteredExamples,
+  };
+}
+
 async function applyVolatilityTimeframe(rawPools, sourceTimeframe) {
   if (!Array.isArray(rawPools) || rawPools.length === 0) return rawPools;
   const volatilityTimeframe = getVolatilityTimeframe(sourceTimeframe);
@@ -434,6 +553,9 @@ export async function discoverPools({
   page_size = 50,
 } = {}) {
   const s = config.screening;
+  if (s.candidateSource === "gmgn_trending") {
+    return discoverGmgnTrendingPools({ page_size });
+  }
   const filters = [
     "base_token_has_critical_warnings=false",
     "quote_token_has_critical_warnings=false",
@@ -603,6 +725,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { positions } = await getMyPositions();
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
+  const usingGmgnSource = config.screening.candidateSource === "gmgn_trending";
   const minTvl = Number(config.screening.minTvl ?? 0);
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
   const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0);
@@ -610,16 +733,16 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const eligible = pools
     .filter((p) => {
       const tvl = Number(p.tvl ?? p.active_tvl ?? 0);
-      if (Number.isFinite(minTvl) && minTvl > 0 && tvl < minTvl) {
+      if (!usingGmgnSource && Number.isFinite(minTvl) && minTvl > 0 && tvl < minTvl) {
         pushFilteredReason(filteredOut, p, `TVL $${tvl} below minTvl $${minTvl}`);
         return false;
       }
-      if (Number.isFinite(maxTvl) && maxTvl > 0 && tvl > maxTvl) {
+      if (!usingGmgnSource && Number.isFinite(maxTvl) && maxTvl > 0 && tvl > maxTvl) {
         pushFilteredReason(filteredOut, p, `TVL $${tvl} above maxTvl $${maxTvl}`);
         return false;
       }
       const feeActiveTvlRatio = Number(p.fee_active_tvl_ratio);
-      if (Number.isFinite(minFeeActiveTvlRatio) && minFeeActiveTvlRatio > 0 && (!Number.isFinite(feeActiveTvlRatio) || feeActiveTvlRatio < minFeeActiveTvlRatio)) {
+      if (!usingGmgnSource && Number.isFinite(minFeeActiveTvlRatio) && minFeeActiveTvlRatio > 0 && (!Number.isFinite(feeActiveTvlRatio) || feeActiveTvlRatio < minFeeActiveTvlRatio)) {
         pushFilteredReason(filteredOut, p, `fee/active-TVL ${Number.isFinite(feeActiveTvlRatio) ? feeActiveTvlRatio : "unknown"} below minFeeActiveTvlRatio ${minFeeActiveTvlRatio}`);
         return false;
       }
