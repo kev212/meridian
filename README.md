@@ -10,7 +10,7 @@ Meridian runs continuous screening and management cycles, deploying capital into
 
 ## What it does
 
-- **Screens pools** — scans Meteora DLMM pools against configurable thresholds (fee/TVL ratio, organic score, holder count, mcap, bin step) and surfaces high-quality opportunities
+- **Screens pools** — scans Meteora DLMM pools against configurable thresholds (fee/TVL ratio, organic score, holder count, mcap, bin step) or pulls trending tokens from GMGN 5m data; surfaces high-quality opportunities
 - **Manages positions** — monitors, claims fees, and closes LP positions autonomously; decides to STAY, CLOSE, or REDEPLOY based on live data
 - **Learns from performance** — studies top LPers in target pools, saves structured lessons, and evolves screening thresholds based on closed position history
 - **Discord signals** — optional Discord listener watches LP Army channels for Solana token calls and queues them for screening
@@ -39,6 +39,7 @@ The harness also keeps a structured decision log in `decision-log.json` for depl
 - Meteora DLMM PnL API — position yield, fee accrual, PnL
 - Pool screening API — fee/TVL ratios, volume, organic scores, holder counts
 - Jupiter API — token audit, mcap, launchpad, price stats
+- GMGN OpenAPI — trending token data (5m intervals), smart degen counts, rug ratios, insider/bundler rates
 
 Agents are powered via **OpenRouter** and can be swapped for any compatible model.
 
@@ -472,6 +473,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 
 | Field | Default | Description |
 |---|---|---|
+| `candidateSource` | `"meteora_discovery"` | Pool source: `meteora_discovery` (on-chain scan) or `gmgn_trending` (GMGN 5m trending) |
 | `minFeeActiveTvlRatio` | `0.05` | Minimum fee/active-TVL ratio |
 | `minTvl` | `10000` | Minimum pool TVL (USD) |
 | `maxTvl` | `150000` | Maximum pool TVL (USD) |
@@ -489,6 +491,22 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `maxTop10Pct` | `60` | Maximum top-10 holder concentration |
 | `blockedLaunchpads` | `[]` | Launchpad names to never deploy into |
 
+### GMGN Trending (when `candidateSource: "gmgn_trending"`)
+
+Requires `GMGN_API_KEY` env var or `gmgnApiKey` in `user-config.json`.
+
+| Field | Default | Description |
+|---|---|---|
+| `gmgnFeeSource` | `"gmgn"` | Fee source for `minTokenFeesSol`: `gmgn` (GMGN API) or `jupiter` (legacy) |
+| `gmgnTrendingInterval` | `"5m"` | Trending interval: `5m`, `15m`, `1h`, `4h`, `24h` |
+| `gmgnTrendingOrderBy` | `"volume"` | Sort field: `volume`, `swaps`, `market_cap`, `liquidity`, `smart_degen_count` |
+| `gmgnTrendingLimit` | `100` | Max tokens to fetch per request |
+| `gmgnMinMarketcap` | `100000` | Minimum market cap filter |
+| `gmgnMaxMarketcap` | `1000000` | Maximum market cap filter |
+| `gmgnMinVolume` | `20000` | Minimum 5m volume |
+| `gmgnMinSwaps` | `100` | Minimum swap count |
+| `gmgnMinLiquidity` | `50000` | Minimum liquidity (USD) |
+
 ### Management
 
 | Field | Default | Description |
@@ -505,6 +523,8 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `trailingTriggerPct` | `3` | Activate trailing TP at this PnL % |
 | `trailingDropPct` | `1.5` | Close when PnL drops this % from peak |
 | `strategy` | `bid_ask` | LP strategy: `spot`, `bid_ask`, or `curve` |
+| `singleDownProfitLockPnL` | `0.5` | Min PnL % to trigger profit lock for single_down positions above range |
+| `singleDownProfitLockMinutes` | `30` | Minutes OOR above before single_down profit lock fires |
 
 ### Schedule
 
@@ -512,6 +532,23 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 |---|---|---|
 | `managementIntervalMin` | `10` | Management cycle frequency (minutes) |
 | `screeningIntervalMin` | `30` | Screening cycle frequency (minutes) |
+
+### Strategy & Range Shape
+
+| Field | Default | Description |
+|---|---|---|
+| `strategy` | `bid_ask` | LP strategy: `spot`, `bid_ask`, or `curve` |
+| `rangeShape` | `"default"` | Range shape: `default` (symmetric around active bin) or `single_down` (full range below active bin) |
+| `singleDownUpperPct` | `-1` | Upper bound % below active bin for single_down (e.g. -1 = 1% below) |
+| `singleDownLowVolLowerPct` | `-30` | Lower bound % for low volatility (<2) single_down positions |
+| `singleDownMediumVolLowerPct` | `-55` | Lower bound % for medium volatility (2–5) single_down positions |
+| `singleDownHighVolLowerPct` | `-75` | Lower bound % for high volatility (>5) single_down positions |
+
+**Single-down range behavior:**
+- Range is placed entirely below the active bin (upper = upperPct below, lower = vol-based lowerPct below)
+- If token pumps above upper bin → position is OOR but held (profit lock applies)
+- If PnL > `singleDownProfitLockPnL` and OOR above > `singleDownProfitLockMinutes` → auto close
+- If token drops below lower bin → normal OOR rules apply (close after `outOfRangeWaitMinutes`)
 
 ### Models
 
@@ -648,6 +685,7 @@ tools/
   executor.js       Tool dispatch + safety checks
   dlmm.js           Meteora DLMM SDK wrapper
   screening.js      Pool discovery
+  gmgn.js           GMGN OpenAPI trending token fetcher
   wallet.js         SOL/token balances + Jupiter swap
   token.js          Token info, holders, narrative
   study.js          Top LPer study via LPAgent API
