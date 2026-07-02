@@ -1,10 +1,52 @@
-# Meridian
+# Meridian (Fork)
 
 **Autonomous Meteora DLMM liquidity management agent for Solana, powered by LLMs.**
 
+Forked from [yunus-0x/meridian](https://github.com/yunus-0x/meridian) with additional features for GMGN-based screening and single-down range strategies.
+
 **Links:** [Website](https://agentmeridian.xyz) | [Telegram](https://t.me/agentmeridian) | [X](https://x.com/meridian_agent)
 
-Meridian runs continuous screening and management cycles, deploying capital into high-quality Meteora DLMM pools and closing positions based on live PnL, yield, and range data. It learns from every position it closes.
+---
+
+## Fork changes (vs upstream)
+
+This fork adds the following features not present in the original repo:
+
+### 1. GMGN Trending Source (`candidateSource: "gmgn_trending"`)
+
+- Pulls trending tokens from GMGN OpenAPI at 5m intervals
+- Filters by volume, swaps, liquidity, market cap, smart degen count
+- Resolves GMGN tokens to Meteora DLMM pools automatically
+- Requires `GMGN_API_KEY` env var or `gmgnApiKey` in `user-config.json`
+- Config keys: `gmgnTrendingInterval`, `gmgnTrendingOrderBy`, `gmgnTrendingLimit`, `gmgnMinMarketcap`, `gmgnMaxMarketcap`, `gmgnMinVolume`, `gmgnMinSwaps`, `gmgnMinLiquidity`
+
+### 2. Single-Down Range Strategy (`rangeShape: "single_down"`)
+
+- Places LP range entirely below the active bin (upper = -1%, lower = -30/-55/-75% based on volatility)
+- If token pumps above upper bin → position held (not auto-closed as OOR)
+- If token drops below lower bin → normal OOR rules apply
+- Config keys: `rangeShape`, `singleDownUpperPct`, `singleDownLowVolLowerPct`, `singleDownMediumVolLowerPct`, `singleDownHighVolLowerPct`
+
+### 3. Single-Down Profit Lock
+
+- Auto-closes single-down positions above range when PnL > threshold for > N minutes
+- Prevents capital lockup when token pumps and doesn't return to range
+- Config keys: `singleDownProfitLockPnL` (default 0.5%), `singleDownProfitLockMinutes` (default 30)
+
+### 4. OOR Handling Fixes
+
+- Fixed OOR log spam for single-down positions (was logging every 3 seconds)
+- Single-down positions above range are no longer marked as OOR in state
+- Deterministic close rules respect single-down shape (rules 3 & 4 skip when `active_bin > upper_bin`)
+
+### 5. Other Changes
+
+- `tools/gmgn.js` — GMGN OpenAPI trending token fetcher with retry/backoff
+- `tools/pnl.js` — OOR tracking skipped for single-down positions
+- `tools/dlmm.js` — OOR tracking skipped for single-down positions
+- `state.js` — `single_down_above_range_since` tracking field
+- `prompt.js` — Updated instructions for GMGN metrics and single-down range
+- `tools/definitions.js` — Updated deploy_position schema for single-down
 
 ---
 
@@ -61,7 +103,7 @@ Agents are powered via **OpenRouter** and can be swapped for any compatible mode
 ### 1. Clone & install
 
 ```bash
-git clone https://github.com/yunus-0x/meridian
+git clone https://github.com/kev212/meridian
 cd meridian
 npm install
 ```
