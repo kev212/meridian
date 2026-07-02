@@ -1266,8 +1266,10 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
         const tracked = getTrackedPosition(positionAddress);
         const isOOR = pool.outOfRange || pool.positionsOutOfRange?.includes(positionAddress);
 
-        if (isOOR) markOutOfRange(positionAddress);
-        else markInRange(positionAddress);
+        if (tracked?.bin_range?.shape !== "single_down") {
+          if (isOOR) markOutOfRange(positionAddress);
+          else markInRange(positionAddress);
+        }
 
         // Bin data: from supplemental PnL call (OOR) or tracked state (in-range)
         const binData = binDataByPool[pool.poolAddress]?.[positionAddress];

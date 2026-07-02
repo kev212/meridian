@@ -201,8 +201,10 @@ function buildPosition(f, prices, solUsd, meteora, solMode) {
     ? f.active >= f.lower && f.active <= f.upper
     : (meteora ? !meteora.isOutOfRange : true);
 
-  if (inRange) markInRange(f.position);
-  else markOutOfRange(f.position);
+  if (tracked?.bin_range?.shape !== "single_down") {
+    if (inRange) markInRange(f.position);
+    else markOutOfRange(f.position);
+  }
 
   const tracked = getTrackedPosition(f.position);
   const ageFromState = tracked?.deployed_at

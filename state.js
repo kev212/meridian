@@ -11,6 +11,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { repoPath } from "./repo-root.js";
+import { config } from "./config.js";
 
 const STATE_FILE = repoPath("state.json");
 
@@ -97,6 +98,7 @@ export function trackPosition({
     signal_snapshot: signal_snapshot || null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
+    single_down_above_range_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
     rebalance_count: 0,
@@ -124,12 +126,7 @@ export function markOutOfRange(position_address) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
-  const isSingleDownWaitingAbove =
-    pos.bin_range?.shape === "single_down" &&
-    pos.bin_range?.active != null &&
-    pos.bin_range?.max != null &&
-    pos.bin_range.active > pos.bin_range.max;
-  if (isSingleDownWaitingAbove) return;
+  if (pos.bin_range?.shape === "single_down") return;
   if (!pos.out_of_range_since) {
     pos.out_of_range_since = new Date().toISOString();
     save(state);
@@ -144,12 +141,7 @@ export function markInRange(position_address) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
-  const isSingleDownWaitingAbove =
-    pos.bin_range?.shape === "single_down" &&
-    pos.bin_range?.active != null &&
-    pos.bin_range?.max != null &&
-    pos.bin_range.active > pos.bin_range.max;
-  if (isSingleDownWaitingAbove) return;
+  if (pos.bin_range?.shape === "single_down") return;
   if (pos.out_of_range_since) {
     pos.out_of_range_since = null;
     save(state);
@@ -392,21 +384,61 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   // Update OOR state
-  if (isSingleDownWaitingAbove && pos.out_of_range_since) {
-    pos.out_of_range_since = null;
-    changed = true;
-    log("state", `Position ${position_address} single_down waiting above range; OOR timer cleared`);
-  } else if (in_range === false && !isSingleDownWaitingAbove && !pos.out_of_range_since) {
-    pos.out_of_range_since = new Date().toISOString();
-    changed = true;
-    log("state", `Position ${position_address} marked out of range`);
-  } else if (in_range === true && pos.out_of_range_since) {
-    pos.out_of_range_since = null;
-    changed = true;
-    log("state", `Position ${position_address} back in range`);
+  if (pos.bin_range?.shape === "single_down") {
+    if (isSingleDownWaitingAbove) {
+      if (!pos.single_down_above_range_since) {
+        pos.single_down_above_range_since = new Date().toISOString();
+        changed = true;
+      }
+      if (pos.out_of_range_since) {
+        pos.out_of_range_since = null;
+        changed = true;
+      }
+    } else if (in_range === true) {
+      if (pos.single_down_above_range_since) {
+        pos.single_down_above_range_since = null;
+        changed = true;
+      }
+      if (pos.out_of_range_since) {
+        pos.out_of_range_since = null;
+        changed = true;
+      }
+    } else if (in_range === false) {
+      if (!pos.out_of_range_since) {
+        pos.out_of_range_since = new Date().toISOString();
+        changed = true;
+      }
+      if (pos.single_down_above_range_since) {
+        pos.single_down_above_range_since = null;
+        changed = true;
+      }
+    }
+  } else {
+    if (in_range === false && !pos.out_of_range_since) {
+      pos.out_of_range_since = new Date().toISOString();
+      changed = true;
+      log("state", `Position ${position_address} marked out of range`);
+    } else if (in_range === true && pos.out_of_range_since) {
+      pos.out_of_range_since = null;
+      changed = true;
+      log("state", `Position ${position_address} back in range`);
+    }
   }
 
   if (changed) save(state);
+
+  // ── Single Down Profit Lock ──────────────────────────────────────
+  if (pos.bin_range?.shape === "single_down" && pos.single_down_above_range_since && currentPnlPct != null) {
+    const profitLockPnL = config?.management?.singleDownProfitLockPnL ?? 0.5;
+    const profitLockMinutes = config?.management?.singleDownProfitLockMinutes ?? 30;
+    const minutesAbove = Math.floor((Date.now() - new Date(pos.single_down_above_range_since).getTime()) / 60000);
+    if (currentPnlPct > profitLockPnL && minutesAbove >= profitLockMinutes) {
+      return {
+        action: "SINGLE_DOWN_TP",
+        reason: `Single down profit lock: PnL ${currentPnlPct.toFixed(2)}% > ${profitLockPnL}% after ${minutesAbove}m above range`,
+      };
+    }
+  }
 
   // ── Stop loss ──────────────────────────────────────────────────
   if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
