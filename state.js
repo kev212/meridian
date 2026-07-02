@@ -124,6 +124,12 @@ export function markOutOfRange(position_address) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
+  const isSingleDownWaitingAbove =
+    pos.bin_range?.shape === "single_down" &&
+    pos.bin_range?.active != null &&
+    pos.bin_range?.max != null &&
+    pos.bin_range.active > pos.bin_range.max;
+  if (isSingleDownWaitingAbove) return;
   if (!pos.out_of_range_since) {
     pos.out_of_range_since = new Date().toISOString();
     save(state);
@@ -138,6 +144,12 @@ export function markInRange(position_address) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
+  const isSingleDownWaitingAbove =
+    pos.bin_range?.shape === "single_down" &&
+    pos.bin_range?.active != null &&
+    pos.bin_range?.max != null &&
+    pos.bin_range.active > pos.bin_range.max;
+  if (isSingleDownWaitingAbove) return;
   if (pos.out_of_range_since) {
     pos.out_of_range_since = null;
     save(state);
