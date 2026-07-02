@@ -348,7 +348,13 @@ export async function runManagementCycle({ silent = false } = {}) {
         else sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
       }
       for (const p of positions) {
-        if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
+        const tracked = getTrackedPosition(p.position);
+        const singleDownWaitingAbove =
+          tracked?.bin_range?.shape === "single_down" &&
+          p.active_bin != null &&
+          p.upper_bin != null &&
+          p.active_bin > p.upper_bin;
+        if (!singleDownWaitingAbove && !p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
           notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => { });
         }
       }
@@ -899,6 +905,11 @@ function formatCandidates(candidates) {
 
 function getDeterministicCloseRule(position, managementConfig) {
   const tracked = getTrackedPosition(position.position);
+  const isSingleDownWaitingAbove =
+    tracked?.bin_range?.shape === "single_down" &&
+    position.active_bin != null &&
+    position.upper_bin != null &&
+    position.active_bin > position.upper_bin;
   const pnlSuspect = (() => {
     // Couldn't-price-this-tick flag (e.g. Jupiter outage) — never act on PnL rules.
     if (position.pnl_pct_suspicious) return true;
@@ -918,6 +929,7 @@ function getDeterministicCloseRule(position, managementConfig) {
     return { action: "CLOSE", rule: 2, reason: "take profit" };
   }
   if (
+    !isSingleDownWaitingAbove &&
     position.active_bin != null &&
     position.upper_bin != null &&
     position.active_bin > position.upper_bin + managementConfig.outOfRangeBinsToClose
@@ -925,6 +937,7 @@ function getDeterministicCloseRule(position, managementConfig) {
     return { action: "CLOSE", rule: 3, reason: "pumped far above range" };
   }
   if (
+    !isSingleDownWaitingAbove &&
     position.active_bin != null &&
     position.upper_bin != null &&
     position.active_bin > position.upper_bin &&

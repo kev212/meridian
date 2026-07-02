@@ -362,6 +362,14 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
 
+  const activeBin = positionData.active_bin;
+  const upperBin = positionData.upper_bin ?? pos.bin_range?.max;
+  const isSingleDownWaitingAbove =
+    pos.bin_range?.shape === "single_down" &&
+    activeBin != null &&
+    upperBin != null &&
+    activeBin > upperBin;
+
   let changed = false;
 
   // Activate trailing TP once trigger threshold is reached
@@ -372,7 +380,11 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   // Update OOR state
-  if (in_range === false && !pos.out_of_range_since) {
+  if (isSingleDownWaitingAbove && pos.out_of_range_since) {
+    pos.out_of_range_since = null;
+    changed = true;
+    log("state", `Position ${position_address} single_down waiting above range; OOR timer cleared`);
+  } else if (in_range === false && !isSingleDownWaitingAbove && !pos.out_of_range_since) {
     pos.out_of_range_since = new Date().toISOString();
     changed = true;
     log("state", `Position ${position_address} marked out of range`);
@@ -408,7 +420,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   // ── Out of range too long ──────────────────────────────────────
-  if (pos.out_of_range_since) {
+  if (pos.out_of_range_since && !isSingleDownWaitingAbove) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
     if (minutesOOR >= mgmtConfig.outOfRangeWaitMinutes) {
       return {
