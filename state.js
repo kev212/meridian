@@ -430,7 +430,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // ── Single Down Profit Lock ──────────────────────────────────────
   if (pos.bin_range?.shape === "single_down" && pos.single_down_above_range_since && currentPnlPct != null) {
     const profitLockPnL = config?.management?.singleDownProfitLockPnL ?? 0.5;
-    const profitLockMinutes = config?.management?.singleDownProfitLockMinutes ?? 30;
+    const profitLockMinutes = config?.management?.singleDownProfitLockMinutes ?? 15;
     const minutesAbove = Math.floor((Date.now() - new Date(pos.single_down_above_range_since).getTime()) / 60000);
     if (currentPnlPct > profitLockPnL && minutesAbove >= profitLockMinutes) {
       return {

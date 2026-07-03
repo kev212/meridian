@@ -31,7 +31,7 @@ This fork adds the following features not present in the original repo:
 
 - Auto-closes single-down positions above range when PnL > threshold for > N minutes
 - Prevents capital lockup when token pumps and doesn't return to range
-- Config keys: `singleDownProfitLockPnL` (default 0.5%), `singleDownProfitLockMinutes` (default 30)
+- Config keys: `singleDownProfitLockPnL` (default 0.5%), `singleDownProfitLockMinutes` (default 15)
 
 ### 4. OOR Handling Fixes
 
@@ -566,7 +566,7 @@ Requires `GMGN_API_KEY` env var or `gmgnApiKey` in `user-config.json`.
 | `trailingDropPct` | `1.5` | Close when PnL drops this % from peak |
 | `strategy` | `bid_ask` | LP strategy: `spot`, `bid_ask`, or `curve` |
 | `singleDownProfitLockPnL` | `0.5` | Min PnL % to trigger profit lock for single_down positions above range |
-| `singleDownProfitLockMinutes` | `30` | Minutes OOR above before single_down profit lock fires |
+| `singleDownProfitLockMinutes` | `15` | Minutes OOR above before single_down profit lock fires |
 
 ### Schedule
 

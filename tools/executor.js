@@ -461,6 +461,8 @@ const toolMap = {
       trailingTakeProfit: ["management", "trailingTakeProfit"],
       trailingTriggerPct: ["management", "trailingTriggerPct"],
       trailingDropPct: ["management", "trailingDropPct"],
+      singleDownProfitLockPnL: ["management", "singleDownProfitLockPnL"],
+      singleDownProfitLockMinutes: ["management", "singleDownProfitLockMinutes"],
       pnlSanityMaxDiffPct: ["management", "pnlSanityMaxDiffPct"],
       // pnl poller
       pnlConfirmTicks: ["pnl", "confirmTicks"],
