@@ -184,6 +184,9 @@ export async function recordPerformance(perf) {
     });
   }
 
+  const { recordGmgnClose } = await import("./gmgn-memory.js");
+  recordGmgnClose(entry);
+
   // Evolve thresholds every 5 closed positions
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
     const { config, reloadScreeningThresholds } = await import("./config.js");

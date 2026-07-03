@@ -33,13 +33,20 @@ This fork adds the following features not present in the original repo:
 - Prevents capital lockup when token pumps and doesn't return to range
 - Config keys: `singleDownProfitLockPnL` (default 0.5%), `singleDownProfitLockMinutes` (default 15)
 
-### 4. OOR Handling Fixes
+### 4. GMGN Candidate Memory (experiment)
+
+- Persists GMGN token memory in `gmgn-memory.json`
+- Records `seen`, `rejected`, `resolved_pool`, `deployed`, and `closed` outcomes
+- Cooldowns repeat bad candidates such as no DLMM pool, low yield, OOR below, and stop loss
+- Boosts repeat winners, especially `single_down` profit-lock closes
+
+### 5. OOR Handling Fixes
 
 - Fixed OOR log spam for single-down positions (was logging every 3 seconds)
 - Single-down positions above range are no longer marked as OOR in state
 - Deterministic close rules respect single-down shape (rules 3 & 4 skip when `active_bin > upper_bin`)
 
-### 5. Other Changes
+### 6. Other Changes
 
 - `tools/gmgn.js` — GMGN OpenAPI trending token fetcher with retry/backoff
 - `tools/pnl.js` — OOR tracking skipped for single-down positions
@@ -548,6 +555,22 @@ Requires `GMGN_API_KEY` env var or `gmgnApiKey` in `user-config.json`.
 | `gmgnMinVolume` | `20000` | Minimum 5m volume |
 | `gmgnMinSwaps` | `100` | Minimum swap count |
 | `gmgnMinLiquidity` | `50000` | Minimum liquidity (USD) |
+
+### GMGN Candidate Memory (experiment)
+
+Runtime state is stored in `gmgn-memory.json` and is ignored by git.
+
+| Field | Default | Description |
+|---|---|---|
+| `gmgnMemoryEnabled` | `true` | Enable GMGN memory recording, cooldowns, and score adjustments |
+| `gmgnMemoryRetentionDays` | `7` | Drop stale tokens after this many days if no cooldown is active |
+| `gmgnNoPoolCooldownMinutes` | `20` | Cooldown when a GMGN token has no SOL-quote DLMM pool |
+| `gmgnLowYieldCooldownHours` | `4` | Cooldown after a low-yield close |
+| `gmgnOorBelowCooldownHours` | `12` | Cooldown after a single_down below-range OOR close |
+| `gmgnStopLossCooldownHours` | `12` | Cooldown after a stop-loss close |
+| `gmgnRepeatWinnerBoost` | `10` | Score boost for repeat winners / single_down profit-lock winners |
+| `gmgnRepeatLoserPenalty` | `15` | Score penalty per recent loser |
+| `gmgnMemoryMaxEventsPerToken` | `30` | Max rejects/deploys/closes kept per token |
 
 ### Management
 

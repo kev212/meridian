@@ -273,6 +273,7 @@ function normalizeConfigValue(key, value) {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
     "useDiscordSignals",
+    "gmgnMemoryEnabled",
     "avoidPvpSymbols",
     "blockPvpSymbols",
     "autoSwapAfterClaim",
@@ -534,6 +535,16 @@ const toolMap = {
       gmgnMinVolume: ["gmgn", "minVolume"],
       gmgnMinSwaps: ["gmgn", "minSwaps"],
       gmgnMinLiquidity: ["gmgn", "minLiquidity"],
+      // gmgn memory
+      gmgnMemoryEnabled: ["gmgnMemory", "enabled"],
+      gmgnMemoryRetentionDays: ["gmgnMemory", "retentionDays"],
+      gmgnNoPoolCooldownMinutes: ["gmgnMemory", "noPoolCooldownMinutes"],
+      gmgnLowYieldCooldownHours: ["gmgnMemory", "lowYieldCooldownHours"],
+      gmgnOorBelowCooldownHours: ["gmgnMemory", "oorBelowCooldownHours"],
+      gmgnStopLossCooldownHours: ["gmgnMemory", "stopLossCooldownHours"],
+      gmgnRepeatWinnerBoost: ["gmgnMemory", "repeatWinnerBoost"],
+      gmgnRepeatLoserPenalty: ["gmgnMemory", "repeatLoserPenalty"],
+      gmgnMemoryMaxEventsPerToken: ["gmgnMemory", "maxEventsPerToken"],
       // chart indicators
       chartIndicatorsEnabled: ["indicators", "enabled", ["chartIndicators", "enabled"]],
       indicatorEntryPreset: ["indicators", "entryPreset", ["chartIndicators", "entryPreset"]],

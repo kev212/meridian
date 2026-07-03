@@ -6,6 +6,12 @@ import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getGmgnTrendingTokens, hasGmgnApiKey } from "./gmgn.js";
+import {
+  getGmgnCooldown,
+  getGmgnMemoryScoreAdjustment,
+  getGmgnMemorySnapshot,
+  recordGmgnDiscovery,
+} from "../gmgn-memory.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 const DATAPI_DLMM = "https://dlmm.datapi.meteora.ag";
@@ -42,7 +48,8 @@ export function scoreCandidate(pool) {
     const liquidity = Number(pool.gmgn_liquidity || 0);
     const smart = Number(pool.gmgn_smart_degen_count || 0);
     const riskPenalty = Number(pool.gmgn_rug_ratio || 0) * 1000 + Number(pool.gmgn_top_10_holder_rate || 0) * 500;
-    return volume / 10 + swaps * 50 + liquidity / 100 + smart * 1000 - riskPenalty;
+    const memoryAdjustment = Number(pool.gmgn_memory_score_adjustment || 0);
+    return volume / 10 + swaps * 50 + liquidity / 100 + smart * 1000 - riskPenalty + memoryAdjustment;
   }
   const feeTvl = Number(pool.fee_active_tvl_ratio || 0);
   const organic = Number(pool.organic_score || 0);
@@ -325,16 +332,30 @@ async function discoverGmgnTrendingPools({ page_size = 50 } = {}) {
     limit,
   });
   const tokens = gmgn.tokens.slice(0, limit);
+  const memoryDb = getGmgnMemorySnapshot();
+  const seenTokens = [];
+  const memoryRejects = [];
+  const memoryResolved = [];
   const filteredExamples = [];
   const resolved = [];
 
   for (const token of tokens) {
+    seenTokens.push(token);
+    const cooldown = getGmgnCooldown(token.mint, memoryDb);
+    if (cooldown.active) {
+      const reason = `GMGN memory cooldown active (${cooldown.reason}) until ${cooldown.until}`;
+      filteredExamples.push({ name: token.symbol || token.mint, reason });
+      memoryRejects.push({ token, reason: "gmgn_memory_cooldown" });
+      continue;
+    }
     if (isBlacklisted(token.mint)) {
       filteredExamples.push({ name: token.symbol || token.mint, reason: "blacklisted token" });
+      memoryRejects.push({ token, reason: "blacklisted token" });
       continue;
     }
     if (token.is_wash_trading) {
       filteredExamples.push({ name: token.symbol || token.mint, reason: "GMGN wash trading flag" });
+      memoryRejects.push({ token, reason: "GMGN wash trading flag" });
       continue;
     }
 
@@ -342,13 +363,25 @@ async function discoverGmgnTrendingPools({ page_size = 50 } = {}) {
       const pool = await resolveGmgnTokenToDlmmPool(token, s.timeframe || "5m");
       if (!pool) {
         filteredExamples.push({ name: token.symbol || token.mint, reason: "no SOL-quote DLMM pool found on Meteora" });
+        memoryRejects.push({ token, reason: "no SOL-quote DLMM pool found on Meteora" });
         continue;
       }
+      const memory = getGmgnMemoryScoreAdjustment(token.mint, memoryDb);
+      pool.gmgn_memory_score_adjustment = memory.adjustment;
+      pool.gmgn_memory_reason = memory.reason;
+      memoryResolved.push({ token, pool });
       resolved.push(pool);
     } catch (error) {
       filteredExamples.push({ name: token.symbol || token.mint, reason: `DLMM resolve failed: ${error.message}` });
+      memoryRejects.push({ token, reason: `DLMM resolve failed: ${error.message}` });
     }
   }
+
+  recordGmgnDiscovery({
+    seenTokens,
+    rejects: memoryRejects,
+    resolved: memoryResolved,
+  });
 
   return {
     total: gmgn.total,

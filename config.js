@@ -256,6 +256,18 @@ export const config = {
     minLiquidity: Number(u.gmgnMinLiquidity ?? 50_000),
   },
 
+  gmgnMemory: {
+    enabled: u.gmgnMemoryEnabled ?? true,
+    retentionDays: Number(u.gmgnMemoryRetentionDays ?? 7),
+    noPoolCooldownMinutes: Number(u.gmgnNoPoolCooldownMinutes ?? 20),
+    lowYieldCooldownHours: Number(u.gmgnLowYieldCooldownHours ?? 4),
+    oorBelowCooldownHours: Number(u.gmgnOorBelowCooldownHours ?? 12),
+    stopLossCooldownHours: Number(u.gmgnStopLossCooldownHours ?? 12),
+    repeatWinnerBoost: Number(u.gmgnRepeatWinnerBoost ?? 10),
+    repeatLoserPenalty: Number(u.gmgnRepeatLoserPenalty ?? 15),
+    maxEventsPerToken: Number(u.gmgnMemoryMaxEventsPerToken ?? 30),
+  },
+
   jupiter: {
     // Internal Jupiter Ultra settings; override by env only, do not expose in user-config.
     apiKey: process.env.JUPITER_API_KEY ?? "",

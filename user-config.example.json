@@ -95,6 +95,15 @@
 
   "gmgnFeeSource": "gmgn",
   "gmgnApiKey": "",
+  "gmgnMemoryEnabled": true,
+  "gmgnMemoryRetentionDays": 7,
+  "gmgnNoPoolCooldownMinutes": 20,
+  "gmgnLowYieldCooldownHours": 4,
+  "gmgnOorBelowCooldownHours": 12,
+  "gmgnStopLossCooldownHours": 12,
+  "gmgnRepeatWinnerBoost": 10,
+  "gmgnRepeatLoserPenalty": 15,
+  "gmgnMemoryMaxEventsPerToken": 30,
 
   "chartIndicators": {
     "enabled": false,

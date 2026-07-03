@@ -30,6 +30,7 @@ import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
 import { computePositions, fetchDlmmPnlForPool } from "./pnl.js";
+import { recordGmgnDeploy } from "../gmgn-memory.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -777,6 +778,14 @@ export async function deployPosition({
           entry_volume,
           entry_holders,
         });
+        recordGmgnDeploy({
+          base_mint: baseMint,
+          pool: pool_address,
+          pool_name,
+          position: positionAddress,
+          amount_sol: finalAmountY,
+          strategy: activeStrategy,
+        });
       }
 
       appendDecision({
@@ -919,6 +928,14 @@ export async function deployPosition({
       entry_tvl,
       entry_volume,
       entry_holders,
+    });
+    recordGmgnDeploy({
+      base_mint: baseMint,
+      pool: pool_address,
+      pool_name,
+      position: newPosition.publicKey.toString(),
+      amount_sol: finalAmountY,
+      strategy: activeStrategy,
     });
 
     appendDecision({
