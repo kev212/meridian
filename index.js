@@ -535,6 +535,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const priceChange = ti?.stats_1h?.price_change;
       const netBuyers = ti?.stats_1h?.net_buyers;
       const activeBin = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
+      const gmgnMetrics = pool.source === "gmgn_trending"
+        ? `  gmgn_gate: rank=${pool.gmgn_rank ?? "?"}, token_volume_5m=$${pool.gmgn_volume_5m ?? "?"}, swaps_5m=${pool.gmgn_swaps_5m ?? "?"}, token_liquidity=$${pool.gmgn_liquidity ?? "?"} (pool_volume_${config.screening.timeframe}=$${pool.volume_window ?? "?"} is informational only)`
+        : null;
       const gmgnMemory = pool.gmgn_memory_score_adjustment
         ? `  gmgn_memory: score ${pool.gmgn_memory_score_adjustment > 0 ? "+" : ""}${pool.gmgn_memory_score_adjustment}${pool.gmgn_memory_reason ? ` (${pool.gmgn_memory_reason})` : ""}`
         : null;
@@ -545,7 +548,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
-        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.tvl ?? pool.active_tvl}, volatility_${pool.volatility_timeframe || "30m"}=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, ${pool.source === "gmgn_trending" ? `pool_vol_${config.screening.timeframe}=$${pool.volume_window}` : `vol=$${pool.volume_window}`}, tvl=$${pool.tvl ?? pool.active_tvl}, volatility_${pool.volatility_timeframe || "30m"}=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+        gmgnMetrics,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         gmgnMemory,
         pvpLine,

@@ -1,4 +1,4 @@
-import { discoverPools, getPoolDetail, getTopCandidates } from "./screening.js";
+import { discoverPools, explainGmgnCandidate, getPoolDetail, getTopCandidates } from "./screening.js";
 import {
   getActiveBin,
   deployPosition,
@@ -317,6 +317,7 @@ function normalizeConfigValue(key, value) {
 const toolMap = {
   discover_pools: discoverPools,
   get_top_candidates: getTopCandidates,
+  explain_gmgn_candidate: explainGmgnCandidate,
   get_pool_detail: getPoolDetail,
   get_position_pnl: getPositionPnl,
   get_active_bin: getActiveBin,

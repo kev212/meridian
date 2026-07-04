@@ -69,6 +69,27 @@ If this returns one candidate, still judge whether it is actually worth deployin
   {
     type: "function",
     function: {
+      name: "explain_gmgn_candidate",
+      description: `Explain why a GMGN token mint is or is not eligible for the current gmgn_trending candidate pipeline.
+Use this for questions like "why didn't this mint enter candidates?" or "kenapa token ini gak masuk kandidat?".
+It checks the actual GMGN token-wide gates (volume/swaps/liquidity/market cap), GMGN memory cooldowns, SOL-quote DLMM resolution, open-position conflicts, pool cooldowns, PVP/indicator filters, and returns the exact failed stage.
+Important: GMGN volume is token-wide GMGN 5m data, not a single Meteora pool's volume_window.`,
+      parameters: {
+        type: "object",
+        properties: {
+          mint: {
+            type: "string",
+            description: "Solana token mint to explain, e.g. Bm5hU3iYP9syzZHte1Ubv5GjSkMjFsCqaVyWcBdpump."
+          }
+        },
+        required: ["mint"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "get_pool_detail",
       description: `Get detailed info for a specific DLMM pool by address.
 Use this during management to check current pool health (volume, fees, organic score, price trend).

@@ -113,6 +113,25 @@ function numeric(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function money(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function buildCheck(name, actual, operator, threshold) {
+  const a = numeric(actual);
+  const t = numeric(threshold);
+  const pass = t == null || (a != null && (operator === "<=" ? a <= t : a >= t));
+  return {
+    name,
+    actual: a,
+    operator,
+    threshold: t,
+    pass,
+  };
+}
+
 function isUsableVolatility(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0;
@@ -388,6 +407,205 @@ async function discoverGmgnTrendingPools({ page_size = 50 } = {}) {
     pools: resolved,
     filtered_examples: filteredExamples,
   };
+}
+
+export async function explainGmgnCandidate({ mint } = {}) {
+  const baseMint = String(mint || "").trim();
+  if (!baseMint) return { success: false, error: "mint is required" };
+
+  const interval = config.gmgn.trendingInterval || config.screening.timeframe || "5m";
+  const limit = Math.min(100, Math.max(1, Number(config.gmgn.trendingLimit || 100)));
+  const result = {
+    success: true,
+    source: "gmgn_trending",
+    mint: baseMint,
+    interval,
+    limit,
+    eligible: false,
+    stage: null,
+    reason: null,
+    checks: [],
+    token: null,
+    resolved_pool: null,
+    score: null,
+    note: "GMGN volume/swaps/liquidity gates use token-wide GMGN 5m data, not one Meteora pool's volume_window.",
+  };
+
+  if (!hasGmgnApiKey()) {
+    return {
+      ...result,
+      stage: "gmgn_api_key",
+      reason: "GMGN_API_KEY not set; gmgn_trending screening cannot verify this mint.",
+    };
+  }
+
+  let trending;
+  try {
+    trending = await getGmgnTrendingTokens({ interval, limit });
+  } catch (error) {
+    return {
+      ...result,
+      stage: "gmgn_fetch",
+      reason: `Could not fetch GMGN trending gate: ${error.message}`,
+    };
+  }
+
+  let token = (trending.tokens || []).find((entry) => entry.mint === baseMint);
+  let inConfiguredGate = !!token;
+
+  if (!token) {
+    try {
+      const relaxed = await getGmgnTrendingTokens({
+        interval,
+        limit,
+        minMarketcap: 0,
+        maxMarketcap: 1_000_000_000_000,
+        minVolume: 0,
+        minSwaps: 0,
+        minLiquidity: 0,
+      });
+      token = (relaxed.tokens || []).find((entry) => entry.mint === baseMint) || null;
+    } catch {
+      token = null;
+    }
+  }
+
+  if (!token) {
+    return {
+      ...result,
+      stage: "gmgn_trending_gate",
+      reason: `Token is not in current GMGN ${interval} top ${limit} trending response. It cannot enter candidates before DLMM pool checks.`,
+    };
+  }
+
+  result.token = {
+    symbol: token.symbol || null,
+    name: token.name || null,
+    rank: token.rank ?? null,
+    market_cap: money(token.market_cap),
+    volume_5m: money(token.volume),
+    swaps_5m: money(token.swaps),
+    liquidity: money(token.liquidity),
+    holder_count: money(token.holder_count),
+    rug_ratio: token.rug_ratio ?? null,
+    top_10_holder_rate: token.top_10_holder_rate ?? null,
+    is_wash_trading: !!token.is_wash_trading,
+    in_configured_gate: inConfiguredGate,
+  };
+
+  const gmgnChecks = [
+    buildCheck("gmgn_market_cap_min", token.market_cap, ">=", config.gmgn.minMarketcap),
+    buildCheck("gmgn_market_cap_max", token.market_cap, "<=", config.gmgn.maxMarketcap),
+    buildCheck("gmgn_volume_5m", token.volume, ">=", config.gmgn.minVolume),
+    buildCheck("gmgn_swaps_5m", token.swaps, ">=", config.gmgn.minSwaps),
+    buildCheck("gmgn_liquidity", token.liquidity, ">=", config.gmgn.minLiquidity),
+  ];
+  result.checks.push(...gmgnChecks);
+
+  const failedGmgnCheck = gmgnChecks.find((check) => !check.pass);
+  if (!inConfiguredGate || failedGmgnCheck) {
+    return {
+      ...result,
+      stage: "gmgn_metric_gate",
+      reason: failedGmgnCheck
+        ? `${failedGmgnCheck.name} ${failedGmgnCheck.actual ?? "unknown"} does not satisfy ${failedGmgnCheck.operator} ${failedGmgnCheck.threshold}.`
+        : `Token was only found outside the configured GMGN ${interval} gate/top ${limit}.`,
+    };
+  }
+
+  if (isBlacklisted(baseMint)) {
+    result.checks.push({ name: "token_blacklist", pass: false });
+    return { ...result, stage: "blacklist", reason: "Token is blacklisted." };
+  }
+  result.checks.push({ name: "token_blacklist", pass: true });
+
+  if (token.is_wash_trading) {
+    result.checks.push({ name: "gmgn_wash_trading", pass: false });
+    return { ...result, stage: "gmgn_wash_trading", reason: "GMGN wash trading flag is true." };
+  }
+  result.checks.push({ name: "gmgn_wash_trading", pass: true });
+
+  const memoryDb = getGmgnMemorySnapshot();
+  const cooldown = getGmgnCooldown(baseMint, memoryDb);
+  if (cooldown.active) {
+    result.checks.push({ name: "gmgn_memory_cooldown", pass: false, reason: cooldown.reason, until: cooldown.until });
+    return { ...result, stage: "gmgn_memory", reason: `GMGN memory cooldown active (${cooldown.reason}) until ${cooldown.until}.` };
+  }
+  result.checks.push({ name: "gmgn_memory_cooldown", pass: true });
+
+  let pool;
+  try {
+    pool = await resolveGmgnTokenToDlmmPool(token, config.screening.timeframe || "5m");
+  } catch (error) {
+    return { ...result, stage: "dlmm_resolve", reason: `DLMM resolve failed: ${error.message}` };
+  }
+  if (!pool) {
+    return { ...result, stage: "dlmm_resolve", reason: "No SOL-quote DLMM pool found on Meteora for this GMGN token." };
+  }
+
+  const memory = getGmgnMemoryScoreAdjustment(baseMint, memoryDb);
+  pool.gmgn_memory_score_adjustment = memory.adjustment;
+  pool.gmgn_memory_reason = memory.reason;
+  result.resolved_pool = {
+    pool: pool.pool,
+    name: pool.name,
+    bin_step: pool.bin_step,
+    pool_volume_window: pool.volume_window,
+    pool_tvl: pool.tvl ?? pool.active_tvl,
+    volatility: pool.volatility,
+    volatility_timeframe: pool.volatility_timeframe,
+    fee_active_tvl_ratio: pool.fee_active_tvl_ratio,
+    gmgn_memory_score_adjustment: memory.adjustment,
+    gmgn_memory_reason: memory.reason,
+  };
+
+  if (!isUsableVolatility(pool.volatility)) {
+    result.checks.push({ name: "pool_volatility", pass: false, actual: pool.volatility });
+    return { ...result, stage: "pool_volatility", reason: `Pool volatility ${pool.volatility ?? "unknown"} is unusable.` };
+  }
+  result.checks.push({ name: "pool_volatility", pass: true, actual: pool.volatility });
+
+  const { getMyPositions } = await import("./dlmm.js");
+  const positionsResult = await getMyPositions().catch(() => ({ positions: [] }));
+  const openPositions = Array.isArray(positionsResult?.positions) ? positionsResult.positions : [];
+  if (openPositions.some((position) => position.pool === pool.pool)) {
+    return { ...result, stage: "open_position", reason: "Wallet already has an open position in this pool." };
+  }
+  if (openPositions.some((position) => position.base_mint === baseMint)) {
+    return { ...result, stage: "open_position", reason: "Wallet already has an open position with this base mint." };
+  }
+
+  if (isPoolOnCooldown(pool.pool)) {
+    return { ...result, stage: "pool_memory", reason: "Pool cooldown active in pool-memory." };
+  }
+  if (isBaseMintOnCooldown(baseMint)) {
+    return { ...result, stage: "pool_memory", reason: "Base mint cooldown active in pool-memory." };
+  }
+
+  if (pool.dev && isDevBlocked(pool.dev)) {
+    return { ...result, stage: "dev_blocklist", reason: `Pool deployer ${pool.dev.slice(0, 8)} is blocked.` };
+  }
+
+  if (config.screening.avoidPvpSymbols) {
+    await enrichPvpRisk([pool]).catch(() => null);
+    if (config.screening.blockPvpSymbols && pool.is_pvp) {
+      return { ...result, stage: "pvp", reason: `PVP hard filter: rival ${pool.pvp_rival_name || pool.pvp_symbol || "unknown"}.` };
+    }
+  }
+
+  if (config.indicators.enabled) {
+    const confirmation = await confirmIndicatorPreset({ mint: baseMint, side: "entry" }).catch((error) => ({ confirmed: true, skipped: true, reason: error.message }));
+    result.indicator_confirmation = confirmation;
+    if (confirmation && !confirmation.confirmed) {
+      return { ...result, stage: "indicator", reason: `Indicator reject: ${confirmation.reason}` };
+    }
+  }
+
+  result.score = scoreCandidate(pool);
+  result.eligible = true;
+  result.stage = "eligible";
+  result.reason = "Mint passes the GMGN candidate pipeline and should be eligible unless later screening-cycle context changes.";
+  return result;
 }
 
 async function applyVolatilityTimeframe(rawPools, sourceTimeframe) {
