@@ -40,13 +40,20 @@ This fork adds the following features not present in the original repo:
 - Cooldowns repeat bad candidates such as no DLMM pool, low yield, OOR below, and stop loss
 - Boosts repeat winners, especially `single_down` profit-lock closes
 
-### 5. OOR Handling Fixes
+### 5. MC Tiering (experiment)
+
+- Two market cap tiers: `under_500k` and `above_500k`
+- `under_500k`: hard reject if `base_fee < 3%`, score boost at `>= 5%`
+- All tiers: prefer `collect_fee_mode=both` (quote+base), fallback to `quote`
+- `explain_gmgn_candidate` shows tier/fee/mode details
+
+### 6. OOR Handling Fixes
 
 - Fixed OOR log spam for single-down positions (was logging every 3 seconds)
 - Single-down positions above range are no longer marked as OOR in state
 - Deterministic close rules respect single-down shape (rules 3 & 4 skip when `active_bin > upper_bin`)
 
-### 6. Other Changes
+### 7. Other Changes
 
 - `tools/gmgn.js` — GMGN OpenAPI trending token fetcher with retry/backoff
 - `tools/pnl.js` — OOR tracking skipped for single-down positions
@@ -571,6 +578,21 @@ Runtime state is stored in `gmgn-memory.json` and is ignored by git.
 | `gmgnRepeatWinnerBoost` | `10` | Score boost for repeat winners / single_down profit-lock winners |
 | `gmgnRepeatLoserPenalty` | `15` | Score penalty per recent loser |
 | `gmgnMemoryMaxEventsPerToken` | `30` | Max rejects/deploys/closes kept per token |
+
+### MC Tiering (experiment)
+
+Two market cap tiers define how pools are scored and filtered:
+
+| Field | Default | Description |
+|---|---|---|
+| `tieringEnabled` | `true` | Enable MC-based tiering rules |
+| `tieringMcapBoundary` | `500000` | Market cap boundary between tiers |
+| `under500kMinBaseFeePct` | `3` | Hard reject under_500k if base_fee below this |
+| `under500kPreferredBaseFeePct` | `5` | Score boost for under_500k if base_fee >= this |
+| `tieringPreferFeeMode` | `"both"` | Prefer `both` (quote+base) over `quote` |
+| `tieringFeeModeBothScoreBoost` | `20` | Score boost for `collect_fee_mode=both` |
+| `tieringFeeModeQuoteScorePenalty` | `-10` | Score penalty for `collect_fee_mode=quote` |
+| `under500kPreferredFeeBoost` | `15` | Extra score boost for under_500k hitting preferred fee |
 
 ### Management
 

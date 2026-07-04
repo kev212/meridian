@@ -268,6 +268,18 @@ export const config = {
     maxEventsPerToken: Number(u.gmgnMemoryMaxEventsPerToken ?? 30),
   },
 
+  // ─── MC Tiering ───────────────────────
+  tiering: {
+    enabled: u.tieringEnabled ?? true,
+    mcapBoundary: Number(u.tieringMcapBoundary ?? 500_000),
+    under500kMinBaseFeePct: Number(u.under500kMinBaseFeePct ?? 3),
+    under500kPreferredBaseFeePct: Number(u.under500kPreferredBaseFeePct ?? 5),
+    preferFeeMode: nonEmptyString(u.tieringPreferFeeMode, "both"), // both | quote
+    feeModeBothScoreBoost: Number(u.tieringFeeModeBothScoreBoost ?? 20),
+    feeModeQuoteScorePenalty: Number(u.tieringFeeModeQuoteScorePenalty ?? -10),
+    under500kPreferredFeeBoost: Number(u.under500kPreferredFeeBoost ?? 15),
+  },
+
   jupiter: {
     // Internal Jupiter Ultra settings; override by env only, do not expose in user-config.
     apiKey: process.env.JUPITER_API_KEY ?? "",

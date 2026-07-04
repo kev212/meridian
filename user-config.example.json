@@ -105,6 +105,15 @@
   "gmgnRepeatLoserPenalty": 15,
   "gmgnMemoryMaxEventsPerToken": 30,
 
+  "tieringEnabled": true,
+  "tieringMcapBoundary": 500000,
+  "under500kMinBaseFeePct": 3,
+  "under500kPreferredBaseFeePct": 5,
+  "tieringPreferFeeMode": "both",
+  "tieringFeeModeBothScoreBoost": 20,
+  "tieringFeeModeQuoteScorePenalty": -10,
+  "under500kPreferredFeeBoost": 15,
+
   "chartIndicators": {
     "enabled": false,
     "entryPreset": "supertrend_break",

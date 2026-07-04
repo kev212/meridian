@@ -155,6 +155,26 @@ async function validateDeployPoolThresholds(args) {
     if (gmgnGate.gmgnMarketData) Object.assign(args, gmgnGate.gmgnMarketData);
   }
 
+  // Tiering deploy safety: under_500k requires base_fee >= min
+  const entryTieringMeta = {};
+  if (config.tiering?.enabled && usingGmgnSource) {
+    const mcap = numberOrNull(args.gmgn_market_cap ?? detail?.token_x?.market_cap);
+    const tier = mcap != null ? (mcap < (config.tiering.mcapBoundary ?? 500_000) ? "under_500k" : "above_500k") : null;
+    if (tier === "under_500k") {
+      const baseFeePct = numberOrNull(detail?.fee_pct);
+      const minFee = Number(config.tiering.under500kMinBaseFeePct ?? 3);
+      if (baseFeePct == null || baseFeePct < minFee) {
+        return {
+          pass: false,
+          reason: `under_500k tier requires base_fee >= ${minFee}%, got ${baseFeePct ?? "unknown"}%.`,
+        };
+      }
+    }
+    entryTieringMeta.mcap_tier = tier;
+    entryTieringMeta.base_fee_pct = numberOrNull(detail?.fee_pct);
+    entryTieringMeta.collect_fee_mode = detail?.dlmm_params?.collect_fee_mode ?? null;
+  }
+
   const tvl = poolDetailTvl(detail);
   const minTvl = numberOrNull(config.screening.minTvl);
   const maxTvl = numberOrNull(config.screening.maxTvl);
@@ -234,6 +254,7 @@ async function validateDeployPoolThresholds(args) {
     entry_tvl: tvl,
     entry_volume: numberOrNull(detail?.volume),
     entry_holders: numberOrNull(detail?.base_token_holders ?? detail?.token_x?.holders),
+    ...entryTieringMeta,
   };
 
   return { pass: true, entryMarketData };
@@ -281,6 +302,7 @@ function normalizeConfigValue(key, value) {
     "solMode",
     "darwinEnabled",
     "lpAgentRelayEnabled",
+    "tieringEnabled",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
   const stringKeys = new Set([
@@ -304,6 +326,7 @@ function normalizeConfigValue(key, value) {
     "gmgnApiKey",
     "gmgnTrendingInterval",
     "gmgnTrendingOrderBy",
+    "tieringPreferFeeMode",
     "rangeShape",
   ]);
   if (value === null) return null;
@@ -546,6 +569,15 @@ const toolMap = {
       gmgnRepeatWinnerBoost: ["gmgnMemory", "repeatWinnerBoost"],
       gmgnRepeatLoserPenalty: ["gmgnMemory", "repeatLoserPenalty"],
       gmgnMemoryMaxEventsPerToken: ["gmgnMemory", "maxEventsPerToken"],
+      // tiering
+      tieringEnabled: ["tiering", "enabled"],
+      tieringMcapBoundary: ["tiering", "mcapBoundary"],
+      under500kMinBaseFeePct: ["tiering", "under500kMinBaseFeePct"],
+      under500kPreferredBaseFeePct: ["tiering", "under500kPreferredBaseFeePct"],
+      tieringPreferFeeMode: ["tiering", "preferFeeMode"],
+      tieringFeeModeBothScoreBoost: ["tiering", "feeModeBothScoreBoost"],
+      tieringFeeModeQuoteScorePenalty: ["tiering", "feeModeQuoteScorePenalty"],
+      under500kPreferredFeeBoost: ["tiering", "under500kPreferredFeeBoost"],
       // chart indicators
       chartIndicatorsEnabled: ["indicators", "enabled", ["chartIndicators", "enabled"]],
       indicatorEntryPreset: ["indicators", "entryPreset", ["chartIndicators", "entryPreset"]],

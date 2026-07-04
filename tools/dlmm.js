@@ -473,6 +473,10 @@ export async function deployPosition({
   entry_tvl,
   entry_volume,
   entry_holders,
+  // tiering metadata (injected by executor deploy safety)
+  mcap_tier,
+  base_fee_pct,
+  collect_fee_mode,
 }) {
   pool_address = normalizeMint(pool_address);
   const activeStrategy = strategy || config.strategy.strategy;
@@ -777,6 +781,9 @@ export async function deployPosition({
           entry_tvl,
           entry_volume,
           entry_holders,
+          mcap_tier,
+          base_fee_pct,
+          collect_fee_mode,
         });
         recordGmgnDeploy({
           base_mint: baseMint,
@@ -928,6 +935,9 @@ export async function deployPosition({
       entry_tvl,
       entry_volume,
       entry_holders,
+      mcap_tier,
+      base_fee_pct,
+      collect_fee_mode,
     });
     recordGmgnDeploy({
       base_mint: baseMint,

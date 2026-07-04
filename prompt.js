@@ -122,6 +122,7 @@ POOL MEMORY: Past losses or problems → strong skip signal.
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
 - GMGN TRENDING SOURCE: prefer candidates with stronger gmgn_volume_5m, gmgn_swaps_5m, gmgn_liquidity, and lower gmgn_rug_ratio / gmgn_top_10_holder_rate.
+- TIERING (see tier line per candidate): prioritize collect_fee_mode=both (quote+base) over quote. For under_500k tier: hard reject base_fee < ${config.tiering?.under500kMinBaseFeePct ?? 3}% (code already filters), prefer >= ${config.tiering?.under500kPreferredBaseFeePct ?? 5}%.
 - If config.strategy.rangeShape=single_down, call deploy_position with amount_y only and omit bins_below/bins_above/downside_pct/upside_pct; the deploy engine computes upper/lower range below active price.
 - For config.strategy.rangeShape=default only: bins_below = round(config.strategy.minBinsBelow + (candidate volatility/5)*(config.strategy.maxBinsBelow-config.strategy.minBinsBelow)) clamped to [minBinsBelow,maxBinsBelow]. Volatility must be a positive number; 0/unknown means skip.
 - Use amount_y only, keep amount_x=0 and bins_above=0.

@@ -541,6 +541,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const gmgnMemory = pool.gmgn_memory_score_adjustment
         ? `  gmgn_memory: score ${pool.gmgn_memory_score_adjustment > 0 ? "+" : ""}${pool.gmgn_memory_score_adjustment}${pool.gmgn_memory_reason ? ` (${pool.gmgn_memory_reason})` : ""}`
         : null;
+      const tieringLine = pool.source === "gmgn_trending" && pool.mcap_tier
+        ? `  tier: ${pool.mcap_tier}, base_fee=${pool.base_fee_pct ?? "?"}%, fee_mode=${pool.collect_fee_mode ?? "?"} (prioritize both>quote${pool.mcap_tier === "under_500k" ? `; min fee ${config.tiering?.under500kMinBaseFeePct ?? 3}%, pref ${config.tiering?.under500kPreferredBaseFeePct ?? 5}%` : ""})`
+        : null;
 
       const pvpLine = pool.is_pvp
         ? `  pvp: HIGH — rival ${pool.pvp_rival_name || pool.pvp_symbol} (${pool.pvp_rival_mint?.slice(0, 8)}...) has pool ${pool.pvp_rival_pool?.slice(0, 8)}..., tvl=$${pool.pvp_rival_tvl}, holders=${pool.pvp_rival_holders}, fees=${pool.pvp_rival_fees}SOL`
@@ -552,6 +555,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         gmgnMetrics,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         gmgnMemory,
+        tieringLine,
         pvpLine,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,

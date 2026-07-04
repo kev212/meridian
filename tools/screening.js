@@ -37,11 +37,52 @@ const PVP_MIN_ACTIVE_TVL = 5_000;
 const PVP_MIN_HOLDERS = 500;
 const PVP_MIN_GLOBAL_FEES_SOL = 30;
 
+// ─── MC Tiering ─────────────────────────────────────────────────
+export function getMcapTier(marketCap) {
+  const boundary = Number(config.tiering?.mcapBoundary ?? 500_000);
+  const mcap = numeric(marketCap);
+  if (mcap == null) return "unknown";
+  return mcap < boundary ? "under_500k" : "above_500k";
+}
+
+export function getCollectFeeMode(pool) {
+  const mode = pool?.dlmm_params?.collect_fee_mode;
+  if (mode === "both" || mode === "quote") return mode;
+  return null;
+}
+
+export function getBaseFeePct(pool) {
+  const fee = pool?.fee_pct ?? pool?.base_fee_percentage;
+  return numeric(fee);
+}
+
+export function scoreFeePreference(pool) {
+  if (!config.tiering?.enabled) return 0;
+  const tier = getMcapTier(pool?.gmgn_market_cap ?? pool?.mcap ?? pool?.token_x?.market_cap);
+  const feePct = getBaseFeePct(pool);
+  const feeMode = getCollectFeeMode(pool);
+  let score = 0;
+
+  if (feeMode === "both") score += Number(config.tiering.feeModeBothScoreBoost ?? 20);
+  else if (feeMode === "quote") score += Number(config.tiering.feeModeQuoteScorePenalty ?? -10);
+
+  if (tier === "under_500k" && feePct != null) {
+    const minFee = Number(config.tiering.under500kMinBaseFeePct ?? 3);
+    const preferredFee = Number(config.tiering.under500kPreferredBaseFeePct ?? 5);
+    if (feePct < minFee) return -100000;
+    if (feePct >= preferredFee) score += Number(config.tiering.under500kPreferredFeeBoost ?? 15);
+  }
+
+  return score;
+}
+
 function normalizeSymbol(symbol) {
   return String(symbol || "").trim().toUpperCase();
 }
 
 export function scoreCandidate(pool) {
+  const feePreference = scoreFeePreference(pool);
+  if (feePreference <= -100000) return feePreference;
   if (pool?.source === "gmgn_trending") {
     const volume = Number(pool.gmgn_volume_5m || 0);
     const swaps = Number(pool.gmgn_swaps_5m || 0);
@@ -49,13 +90,13 @@ export function scoreCandidate(pool) {
     const smart = Number(pool.gmgn_smart_degen_count || 0);
     const riskPenalty = Number(pool.gmgn_rug_ratio || 0) * 1000 + Number(pool.gmgn_top_10_holder_rate || 0) * 500;
     const memoryAdjustment = Number(pool.gmgn_memory_score_adjustment || 0);
-    return volume / 10 + swaps * 50 + liquidity / 100 + smart * 1000 - riskPenalty + memoryAdjustment;
+    return volume / 10 + swaps * 50 + liquidity / 100 + smart * 1000 - riskPenalty + memoryAdjustment + feePreference;
   }
   const feeTvl = Number(pool.fee_active_tvl_ratio || 0);
   const organic = Number(pool.organic_score || 0);
   const volume = Number(pool.volume_window || 0);
   const holders = Number(pool.holders || 0);
-  return feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
+  return feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100 + feePreference;
 }
 
 /**
@@ -331,7 +372,35 @@ async function resolveGmgnTokenToDlmmPool(token, timeframe) {
     .map((result) => result.value);
   if (details.length === 0) return null;
 
-  details.sort((a, b) => Number(b.active_tvl ?? b.tvl ?? 0) - Number(a.active_tvl ?? a.tvl ?? 0));
+  // Tiering filter: for under_500k, drop pools with base fee below the minimum.
+  if (config.tiering?.enabled) {
+    const mcap = numeric(token.market_cap);
+    const tier = getMcapTier(mcap);
+    if (tier === "under_500k") {
+      const minFee = Number(config.tiering.under500kMinBaseFeePct ?? 3);
+      const before = details.length;
+      const filtered = details.filter((pool) => {
+        const feePct = getBaseFeePct(pool);
+        return feePct != null && feePct >= minFee;
+      });
+      log("screening", `resolveGmgnTokenToDlmmPool under_500k fee filter: ${before} → ${filtered.length} pools (min base_fee >= ${minFee}%)`);
+      if (filtered.length === 0) return null;
+      details.length = 0;
+      details.push(...filtered);
+    }
+  }
+
+  // Sort by tier preference: both > quote, then higher fee_pct, then higher TVL.
+  details.sort((a, b) => {
+    const modeA = getCollectFeeMode(a);
+    const modeB = getCollectFeeMode(b);
+    if (modeA === "both" && modeB !== "both") return -1;
+    if (modeB === "both" && modeA !== "both") return 1;
+    const feeA = getBaseFeePct(a) ?? 0;
+    const feeB = getBaseFeePct(b) ?? 0;
+    if (feeA !== feeB) return feeB - feeA;
+    return Number(b.active_tvl ?? b.tvl ?? 0) - Number(a.active_tvl ?? a.tvl ?? 0);
+  });
   return attachGmgnMetrics(condensePool(details[0]), token);
 }
 
@@ -491,7 +560,15 @@ export async function explainGmgnCandidate({ mint } = {}) {
     top_10_holder_rate: token.top_10_holder_rate ?? null,
     is_wash_trading: !!token.is_wash_trading,
     in_configured_gate: inConfiguredGate,
+    mcap_tier: getMcapTier(token.market_cap),
   };
+  result.tiering = config.tiering?.enabled !== false ? {
+    mcap_tier: result.token.mcap_tier,
+    mcap_boundary: config.tiering.mcapBoundary,
+    prefer_fee_mode: config.tiering.preferFeeMode,
+    under_500k_min_base_fee: config.tiering.under500kMinBaseFeePct,
+    under_500k_preferred_base_fee: config.tiering.under500kPreferredBaseFeePct,
+  } : null;
 
   const gmgnChecks = [
     buildCheck("gmgn_market_cap_min", token.market_cap, ">=", config.gmgn.minMarketcap),
@@ -540,6 +617,19 @@ export async function explainGmgnCandidate({ mint } = {}) {
     return { ...result, stage: "dlmm_resolve", reason: `DLMM resolve failed: ${error.message}` };
   }
   if (!pool) {
+    // Check whether there are SOL-quote DLMM pools at all to give a better reason.
+    if (config.tiering?.enabled && getMcapTier(token.market_cap) === "under_500k") {
+      try {
+        const dlmmPools = await fetchDlmmPoolsByMint(baseMint);
+        const solQuoteExists = dlmmPools.some((p) => {
+          const qm = p.token_y?.address || p.quote_token_address || null;
+          return qm === SOL_MINT && (!p.pool_type || p.pool_type === "dlmm");
+        });
+        if (solQuoteExists) {
+          return { ...result, stage: "tiering_fee", reason: `under_500k: All SOL-quote DLMM pools have base_fee < ${config.tiering.under500kMinBaseFeePct}% (min required).` };
+        }
+      } catch {}
+    }
     return { ...result, stage: "dlmm_resolve", reason: "No SOL-quote DLMM pool found on Meteora for this GMGN token." };
   }
 
@@ -557,7 +647,20 @@ export async function explainGmgnCandidate({ mint } = {}) {
     fee_active_tvl_ratio: pool.fee_active_tvl_ratio,
     gmgn_memory_score_adjustment: memory.adjustment,
     gmgn_memory_reason: memory.reason,
+    mcap_tier: result.token.mcap_tier,
+    base_fee_pct: numeric(pool.fee_pct),
+    collect_fee_mode: getCollectFeeMode({ dlmm_params: pool.dlmm_params ?? { collect_fee_mode: getCollectFeeMode({ dlmm_params: pool }) ?? undefined } }) || "unknown",
   };
+
+  // Tier-specific gate: under_500k base fee too low (should already be caught by resolve, but check again)
+  if (config.tiering?.enabled && result.resolved_pool.mcap_tier === "under_500k") {
+    const minFee = Number(config.tiering.under500kMinBaseFeePct ?? 3);
+    if (result.resolved_pool.base_fee_pct == null || result.resolved_pool.base_fee_pct < minFee) {
+      result.checks.push({ name: "tiering_under500k_base_fee", pass: false, actual: result.resolved_pool.base_fee_pct, threshold: minFee, operator: ">=" });
+      return { ...result, stage: "tiering_fee", reason: `under_500k requires base_fee >= ${minFee}%, got ${result.resolved_pool.base_fee_pct ?? "unknown"}%.` };
+    }
+    result.checks.push({ name: "tiering_under500k_base_fee", pass: true, actual: result.resolved_pool.base_fee_pct });
+  }
 
   if (!isUsableVolatility(pool.volatility)) {
     result.checks.push({ name: "pool_volatility", pass: false, actual: pool.volatility });
@@ -1134,6 +1237,11 @@ function condensePool(p) {
     pool_type: p.pool_type,
     bin_step: p.dlmm_params?.bin_step || null,
     fee_pct: p.fee_pct,
+
+    // Tiering — market cap, base fee, fee collection mode
+    mcap_tier: getMcapTier(p.gmgn_market_cap ?? p.mcap ?? p.token_x?.market_cap),
+    base_fee_pct: p.fee_pct,
+    collect_fee_mode: getCollectFeeMode(p) || "unknown",
 
     // Core metrics (the numbers that matter)
     tvl: round(p.tvl),
